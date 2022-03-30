@@ -13,3 +13,20 @@ initialise.lmcode <- function(data_list,
               main.code=main.code))
 
 }
+
+#' @export
+extract_config <- function(verbose=T){
+  config <- list(
+    j_dim = 30,
+    max_iter=350,
+    seed = 1,
+    tol=1,
+    verbose = T
+  )
+
+  if (verbose == T){
+    print(config)
+  }
+
+  return(config)
+}
