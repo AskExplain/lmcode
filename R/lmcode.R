@@ -30,7 +30,7 @@ lmcode <- function(data_list,
 
   while (T){
 
-    prev.code <- main.code
+    prev.lmcode <- main.code$lm.code
 
     return_update <- update_set(
       data_list = data_list,
@@ -41,7 +41,7 @@ lmcode <- function(data_list,
     main.parameters <- return_update$main.parameters
     main.code <- return_update$main.code
 
-    total.mse <- mean(abs(main.code$lm.code - prev.code$lm.code))
+    total.mse <- mean(abs(prev.lmcode - main.code$lm.code))
 
     # Check convergence
     convergence.parameters$score.vec <- c(convergence.parameters$score.vec, total.mse)
@@ -97,19 +97,22 @@ update_set <- function(data_list,
                        main.code){
 
   main.parameters$A <- (MASS::ginv(t(main.code$lm.code)%*%(main.code$lm.code))%*%t(main.code$lm.code)%*%data_list$y)
+  main.parameters$alpha <- t(main.parameters$A)
   main.code$lm.code = data_list$y%*%t(main.parameters$A)%*%MASS::ginv(main.parameters$A%*%t(main.parameters$A))
 
   main.parameters$B <- (MASS::ginv(t(main.code$lm.code)%*%(main.code$lm.code))%*%t(main.code$lm.code)%*%data_list$x)
+  main.parameters$beta <- t(main.parameters$B)
   main.code$lm.code = data_list$x%*%t(main.parameters$B)%*%MASS::ginv(main.parameters$B%*%t(main.parameters$B))
 
-  main.parameters$beta <- MASS::ginv(t(main.parameters$B)%*%main.parameters$B)%*%t(main.parameters$B)%*%main.parameters$A
-  main.parameters$var_y <- (main.parameters$A - main.parameters$B%*%main.parameters$beta)%*%t(main.parameters$A - main.parameters$B%*%main.parameters$beta)
-
   main.parameters$C <- (MASS::ginv(t(main.code$lm.code)%*%(main.code$lm.code))%*%t(main.code$lm.code)%*%data_list$z)
+  main.parameters$u <- t(main.parameters$C)
   main.code$lm.code = data_list$z%*%t(main.parameters$C)%*%MASS::ginv(main.parameters$C%*%t(main.parameters$C))
 
-  main.parameters$D <- diag(diag(main.parameters$var_y - (main.parameters$C%*%main.parameters$u)%*%t(main.parameters$C%*%main.parameters$u)))
-  main.parameters$u <- MASS::ginv(t(main.parameters$C)%*%main.parameters$C)%*%t(main.parameters$C)%*%(main.parameters$var_y - main.parameters$D)%*%main.parameters$C%*%MASS::ginv(t(main.parameters$C)%*%main.parameters$C)%*%main.parameters$u%*%MASS::ginv(t(main.parameters$u)%*%main.parameters$u)
+  for (k in c(1:2)){
+    main.parameters$var_y <- (main.parameters$A%*%main.parameters$alpha - main.parameters$B%*%main.parameters$beta)%*%t(main.parameters$A%*%main.parameters$alpha - main.parameters$B%*%main.parameters$beta)
+    main.parameters$D <- if(config$j_dim==1){main.parameters$var_y - (main.parameters$C%*%main.parameters$u)%*%t(main.parameters$C%*%main.parameters$u)}else{diag(diag(main.parameters$var_y - (main.parameters$C%*%main.parameters$u)%*%t(main.parameters$C%*%main.parameters$u)))}
+    main.parameters$u <- (main.parameters$u%*%MASS::ginv(t(main.parameters$C%*%main.parameters$u)%*%main.parameters$C%*%main.parameters$u)%*%t(main.parameters$C%*%main.parameters$u)%*%(main.parameters$var_y - main.parameters$D)%*%(main.parameters$C%*%main.parameters$u)%*%MASS::ginv(t(main.parameters$C%*%main.parameters$u)%*%main.parameters$C%*%main.parameters$u))
+  }
 
   return(list(main.parameters = main.parameters,
               main.code = main.code
