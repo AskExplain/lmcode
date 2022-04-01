@@ -15,10 +15,10 @@ lmcode <- function(data_list,
 
   set.seed(config$seed)
 
-  convergence.parameters <- list(count=0,score.vec=c())
+  convergence.parameters <- list(count=0,score.vec=c(),curr.cost = 1e6)
 
   initialise.model <- initialise.lmcode(data_list = data_list,
-                                       config = config)
+                                        config = config)
 
   main.parameters <- initialise.model$main.parameters
   main.code <- initialise.model$main.code
@@ -30,18 +30,27 @@ lmcode <- function(data_list,
 
   while (T){
 
-    prev.lmcode <- main.code$lm.code
+    prev.cost <- convergence.parameters$curr.cost
 
-    return_update <- update_set(
-      data_list = data_list,
-      main.parameters = main.parameters,
-      main.code = main.code
-    )
+    for (draw.i in c(1:3)){
 
-    main.parameters <- return_update$main.parameters
-    main.code <- return_update$main.code
+      config$type_draw <- draw.i
 
-    total.mse <- mean(abs(prev.lmcode - main.code$lm.code))
+      return_update <- update_set(
+        data_list = data_list,
+        main.parameters = main.parameters,
+        main.code = main.code,
+        config = config
+      )
+
+      main.parameters <- return_update$main.parameters
+      main.code <- return_update$main.code
+
+    }
+
+
+    convergence.parameters$curr.cost <- main.code$lm.code
+    total.mse <- mean(abs(prev.cost - convergence.parameters$curr.cost))
 
     # Check convergence
     convergence.parameters$score.vec <- c(convergence.parameters$score.vec, total.mse)
@@ -49,8 +58,8 @@ lmcode <- function(data_list,
     prev.MSE <- tail(convergence.parameters$score.vec,2)[1]
 
     if (convergence.parameters$count>=1){
-      print(paste("Iteration: ",convergence.parameters$count," with Tolerance of: ", abs(prev.MSE - MSE),sep=""))
-      if ((convergence.parameters$count >= config$max_iter ) | abs(prev.MSE - MSE) < config$tol){
+      print(paste("Iteration: ",convergence.parameters$count," with Tolerance of: ", (prev.MSE - MSE),sep=""))
+      if ((convergence.parameters$count >= config$max_iter ) | (prev.MSE - MSE) < config$tol){
         break
       }
     }
@@ -94,25 +103,35 @@ lmcode <- function(data_list,
 #' @export
 update_set <- function(data_list,
                        main.parameters,
-                       main.code){
+                       main.code,
+                       config){
 
   main.parameters$A <- (MASS::ginv(t(main.code$lm.code)%*%(main.code$lm.code))%*%t(main.code$lm.code)%*%data_list$y)
-  main.parameters$alpha <- t(main.parameters$A)
-  main.code$lm.code = data_list$y%*%t(main.parameters$A)%*%MASS::ginv(main.parameters$A%*%t(main.parameters$A))
+  main.parameters$alpha <- soft_threshold(t(main.parameters$A), config = config)
 
   main.parameters$B <- (MASS::ginv(t(main.code$lm.code)%*%(main.code$lm.code))%*%t(main.code$lm.code)%*%data_list$x)
-  main.parameters$beta <- t(main.parameters$B)
-  main.code$lm.code = data_list$x%*%t(main.parameters$B)%*%MASS::ginv(main.parameters$B%*%t(main.parameters$B))
+  main.parameters$beta <- soft_threshold(t(main.parameters$B), config = config)
+  main.parameters$var_y <- (main.parameters$A%*%main.parameters$alpha - main.parameters$B%*%main.parameters$beta)%*%t(main.parameters$A%*%main.parameters$alpha - main.parameters$B%*%main.parameters$beta)
 
-  main.parameters$C <- (MASS::ginv(t(main.code$lm.code)%*%(main.code$lm.code))%*%t(main.code$lm.code)%*%data_list$z)
-  main.parameters$u <- t(main.parameters$C)
-  main.code$lm.code = data_list$z%*%t(main.parameters$C)%*%MASS::ginv(main.parameters$C%*%t(main.parameters$C))
-
-  for (k in c(1:2)){
-    main.parameters$var_y <- (main.parameters$A%*%main.parameters$alpha - main.parameters$B%*%main.parameters$beta)%*%t(main.parameters$A%*%main.parameters$alpha - main.parameters$B%*%main.parameters$beta)
+  if (!is.null(data_list$z)){
+    main.parameters$C <- (MASS::ginv(t(main.code$lm.code)%*%(main.code$lm.code))%*%t(main.code$lm.code)%*%data_list$z)
     main.parameters$D <- if(config$j_dim==1){main.parameters$var_y - (main.parameters$C%*%main.parameters$u)%*%t(main.parameters$C%*%main.parameters$u)}else{diag(diag(main.parameters$var_y - (main.parameters$C%*%main.parameters$u)%*%t(main.parameters$C%*%main.parameters$u)))}
-    main.parameters$u <- (main.parameters$u%*%MASS::ginv(t(main.parameters$C%*%main.parameters$u)%*%main.parameters$C%*%main.parameters$u)%*%t(main.parameters$C%*%main.parameters$u)%*%(main.parameters$var_y - main.parameters$D)%*%(main.parameters$C%*%main.parameters$u)%*%MASS::ginv(t(main.parameters$C%*%main.parameters$u)%*%main.parameters$C%*%main.parameters$u))
+    main.parameters$u <- soft_threshold((main.parameters$u%*%MASS::ginv(t(main.parameters$C%*%main.parameters$u)%*%main.parameters$C%*%main.parameters$u)%*%t(main.parameters$C%*%main.parameters$u)%*%(main.parameters$var_y - main.parameters$D)%*%(main.parameters$C%*%main.parameters$u)%*%MASS::ginv(t(main.parameters$C%*%main.parameters$u)%*%main.parameters$C%*%main.parameters$u)), config = config)
   }
+
+  main.code$lm.code <-
+    if(config$type_draw == 1){
+      data_list$y%*%t(main.parameters$A)%*%MASS::ginv(main.parameters$A%*%t(main.parameters$A))
+    } else if (config$type_draw == 2){
+      data_list$x%*%t(main.parameters$B)%*%MASS::ginv(main.parameters$B%*%t(main.parameters$B))
+    } else if (config$type_draw == 3){
+      if (!is.null(data_list$z)){
+        data_list$z%*%t(main.parameters$C)%*%MASS::ginv(main.parameters$C%*%t(main.parameters$C))
+      } else {
+        main.code$lm.code
+      }
+    }
+
 
   return(list(main.parameters = main.parameters,
               main.code = main.code
