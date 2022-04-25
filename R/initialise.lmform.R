@@ -4,39 +4,27 @@ initialise.lmform <- function(data_list,
 ){
 
 
-  main.form <- list(lm.form = array(rnorm(dim(data_list$y)[1]*config$j_dim),dim=c(dim(data_list$y)[1],config$j_dim)))
 
-  if (config$init == "svd"){
-    main.parameters <- list(alpha = irlba::irlba(data_list$y,nv = config$j_dim,maxit = 5)$v,
-                            beta = if(!is.null(data_list$x)){irlba::irlba(data_list$x,nv = config$j_dim,maxit = 5)$v}else{NULL},
-                            u = if(!is.null(data_list$z)){irlba::irlba(data_list$z,nv = config$j_dim,maxit = 5)$v}else{NULL}
-    )
-  }
+  main.form <- list(K=(irlba::irlba(Y%*%t(Y)+X%*%t(X)+Z%*%t(Z),nu = config$j_dim, it = 30)$u),H=NULL)
+  main.parameters <- list(A=NULL,alpha=NULL,
+                          B=NULL,beta=NULL,
+                          C=NULL,u=NULL,
+                          intercept=NULL)
 
-  if (config$init == "rnorm"){
-    main.parameters <- list(alpha = array(rnorm(dim(data_list$y)[2]*config$j_dim),dim=c(dim(data_list$y)[2],config$j_dim)),
-                            beta = if(!is.null(data_list$x)){array(rnorm(dim(data_list$x)[2]*config$j_dim),dim=c(dim(data_list$x)[2],config$j_dim))}else{NULL},
-                            u = if(!is.null(data_list$z)){array(rnorm(dim(data_list$z)[2]*config$j_dim),dim=c(dim(data_list$z)[2],config$j_dim))}else{NULL}
-    )
-  }
 
-  main.parameters$A <- t(main.parameters$alpha)
-  main.parameters$B <- t(main.parameters$beta)
-  main.parameters$C <- if(!is.null(data_list$z)){t(main.parameters$u)}else{NULL}
-
-  main.form$lm.form = data_list$y%*%t(main.parameters$A)%*%MASS::ginv(main.parameters$A%*%t(main.parameters$A))
-  main.parameters$A <- (MASS::ginv(t(main.form$lm.form)%*%(main.form$lm.form))%*%t(main.form$lm.form)%*%data_list$y)
+  main.parameters$A <- (MASS::ginv(t(main.form$K)%*%(main.form$K))%*%t(main.form$K)%*%(data_list$y))
   main.parameters$alpha <- soft_threshold(t(main.parameters$A), config = config)
 
-  main.form$lm.form = data_list$x%*%t(main.parameters$B)%*%MASS::ginv(main.parameters$B%*%t(main.parameters$B))
-  main.parameters$B <- (MASS::ginv(t(main.form$lm.form)%*%(main.form$lm.form))%*%t(main.form$lm.form)%*%data_list$x)
-  main.parameters$beta <- soft_threshold(param = t(main.parameters$B), config = config)
+  main.parameters$B <- (MASS::ginv(t(main.form$K)%*%(main.form$K))%*%t(main.form$K)%*%data_list$x)
+  main.parameters$beta <- soft_threshold(t(main.parameters$B), config = config)
 
-  if (!is.null(data_list$z)){
-    main.form$lm.form = data_list$z%*%t(main.parameters$C)%*%MASS::ginv(main.parameters$C%*%t(main.parameters$C))
-    main.parameters$C <- (MASS::ginv(t(main.form$lm.form)%*%(main.form$lm.form))%*%t(main.form$lm.form)%*%data_list$z)
-    main.parameters$u <- soft_threshold(t(main.parameters$C), config = config)
-  }
+  main.form$K <- data_list$x%*%main.parameters$beta%*%MASS::ginv(t(main.parameters$beta)%*%main.parameters$beta)
+  main.form$H <- data_list$y%*%main.parameters$alpha%*%MASS::ginv(t(main.parameters$alpha)%*%main.parameters$alpha) - main.form$K
+
+  main.parameters$C <- (MASS::ginv(t(main.form$H)%*%(main.form$H))%*%t(main.form$H)%*%data_list$z)
+  main.parameters$u <- soft_threshold(t(main.parameters$C), config = config)
+
+  main.parameters$intercept <- data_list$y%*%main.parameters$alpha - data_list$x%*%main.parameters$beta
 
   return(list(main.parameters=main.parameters,
               main.form=main.form))
@@ -46,7 +34,6 @@ initialise.lmform <- function(data_list,
 #' @export
 extract_config <- function(verbose=T){
   config <- list(
-    init = "svd",
     regularise = list(a=0,l=0),
     j_dim = 30,
     max_iter=10,

@@ -30,7 +30,7 @@ lmform <- function(data_list,
 
   while (T){
 
-    prev.cost <- convergence.parameters$curr.cost
+    prev.cost <- main.form$K+main.form$H
 
     for (draw.i in c(1:3)){
 
@@ -49,7 +49,7 @@ lmform <- function(data_list,
     }
 
 
-    convergence.parameters$curr.cost <- main.form$lm.form
+    convergence.parameters$curr.cost <- main.form$K+main.form$H
     total.mse <- mean(abs(prev.cost - convergence.parameters$curr.cost))
 
     # Check convergence
@@ -58,8 +58,10 @@ lmform <- function(data_list,
     prev.MSE <- tail(convergence.parameters$score.vec,2)[1]
 
     if (convergence.parameters$count>=1){
-      print(paste("Iteration: ",convergence.parameters$count," with Tolerance of: ", (prev.MSE - MSE),sep=""))
-      if ((convergence.parameters$count >= config$max_iter ) | (prev.MSE - MSE) < config$tol){
+      if (config$verbose){
+        print(paste("Iteration: ",convergence.parameters$count," with Tolerance of: ", abs(prev.MSE - MSE),sep=""))
+      }
+      if ((convergence.parameters$count >= config$max_iter ) | abs(prev.MSE - MSE) < config$tol){
         break
       }
     }
@@ -106,31 +108,19 @@ update_set <- function(data_list,
                        main.form,
                        config){
 
-  main.parameters$A <- (MASS::ginv(t(main.form$lm.form)%*%(main.form$lm.form))%*%t(main.form$lm.form)%*%data_list$y)
+  main.parameters$A <- (MASS::ginv(t(main.form$K+main.form$H)%*%(main.form$K+main.form$H))%*%t(main.form$K+main.form$H)%*%(data_list$y))
   main.parameters$alpha <- soft_threshold(t(main.parameters$A), config = config)
 
-  main.parameters$B <- (MASS::ginv(t(main.form$lm.form)%*%(main.form$lm.form))%*%t(main.form$lm.form)%*%data_list$x)
+  main.parameters$B <- (MASS::ginv(t(main.form$K)%*%(main.form$K))%*%t(main.form$K)%*%data_list$x)
   main.parameters$beta <- soft_threshold(t(main.parameters$B), config = config)
-  main.parameters$var_y <- (main.parameters$A%*%main.parameters$alpha - main.parameters$B%*%main.parameters$beta)%*%t(main.parameters$A%*%main.parameters$alpha - main.parameters$B%*%main.parameters$beta)
 
-  if (!is.null(data_list$z)){
-    main.parameters$C <- (MASS::ginv(t(main.form$lm.form)%*%(main.form$lm.form))%*%t(main.form$lm.form)%*%data_list$z)
-    main.parameters$D <- if(config$j_dim==1){main.parameters$var_y - (main.parameters$C%*%main.parameters$u)%*%t(main.parameters$C%*%main.parameters$u)}else{diag(diag(main.parameters$var_y - (main.parameters$C%*%main.parameters$u)%*%t(main.parameters$C%*%main.parameters$u)))}
-    main.parameters$u <- soft_threshold((main.parameters$u%*%MASS::ginv(t(main.parameters$C%*%main.parameters$u)%*%main.parameters$C%*%main.parameters$u)%*%t(main.parameters$C%*%main.parameters$u)%*%(main.parameters$var_y - main.parameters$D)%*%(main.parameters$C%*%main.parameters$u)%*%MASS::ginv(t(main.parameters$C%*%main.parameters$u)%*%main.parameters$C%*%main.parameters$u)), config = config)
-  }
+  main.parameters$C <- (MASS::ginv(t(main.form$H)%*%(main.form$H))%*%t(main.form$H)%*%data_list$z)
+  main.parameters$u <- soft_threshold(t(main.parameters$C), config = config)
 
-  main.form$lm.form <-
-    if(config$type_draw == 1){
-      data_list$y%*%t(main.parameters$A)%*%MASS::ginv(main.parameters$A%*%t(main.parameters$A))
-    } else if (config$type_draw == 2){
-      data_list$x%*%t(main.parameters$B)%*%MASS::ginv(main.parameters$B%*%t(main.parameters$B))
-    } else if (config$type_draw == 3){
-      if (!is.null(data_list$z)){
-        data_list$z%*%t(main.parameters$C)%*%MASS::ginv(main.parameters$C%*%t(main.parameters$C))
-      } else {
-        main.form$lm.form
-      }
-    }
+  main.form$K <- data_list$x%*%main.parameters$beta%*%MASS::ginv(t(main.parameters$beta)%*%main.parameters$beta)
+  main.form$H <- (data_list$y%*%main.parameters$alpha - data_list$x%*%main.parameters$beta)%*%MASS::ginv(t(main.parameters$u)%*%main.parameters$u)
+
+  main.parameters$intercept <- data_list$y%*%main.parameters$alpha - data_list$x%*%main.parameters$beta
 
   return(list(main.parameters = main.parameters,
               main.form = main.form
@@ -167,4 +157,3 @@ soft_threshold <- function(param,config){
   return(param / (1 + lambda*(1 - alpha)))
 
 }
-
