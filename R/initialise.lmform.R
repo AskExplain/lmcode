@@ -26,29 +26,36 @@ initialise.lmform <- function(data_list,
   join$beta <- c(1,2,3)
   join$code <- c(1,2,3)
 
+  data_list <- list(y=data_list$y,x=data_list$x,z=data_list$z)
   gcode.model <- gcode::gcode(data_list = data_list, config = gcode.config, join = join)
 
-  main.form$K <- t(gcode.model$main.parameters$alpha[[2]])%*%gcode.model$main.code$code[[2]]
-  main.form$H <- t(gcode.model$main.parameters$alpha[[3]])%*%gcode.model$main.code$code[[3]]
-  main.form$L <- main.form$K+main.form$H
+  main.form$fixed_form <- (t(gcode.model$main.parameters$alpha[[1]])%*%gcode.model$main.code$code[[1]]+t(gcode.model$main.parameters$alpha[[2]])%*%gcode.model$main.code$code[[2]])/2
 
-  main.parameters$main.fixed$alpha <- t((MASS::ginv(t(main.form$L)%*%(main.form$L))%*%t(main.form$L)%*%(data_list$y)))
-  main.parameters$main.fixed$beta <- t((MASS::ginv(t(main.form$K)%*%(main.form$K))%*%t(main.form$K)%*%(data_list$x)))
-  main.parameters$main.random$u <- t(MASS::ginv(t(main.form$H)%*%main.form$H)%*%t(main.form$H)%*%data_list$z)
 
-  main.parameters$main.random$V_inv <- diag(dim(data_list$y)[1]) - main.form$H%*%MASS::ginv(MASS::ginv(t(main.parameters$main.random$u)%*%(main.parameters$main.random$u)) + t(main.form$H)%*%main.form$H)%*%t(main.form$H)
-  main.parameters$main.random$P <- main.parameters$main.random$V_inv - main.parameters$main.random$V_inv%*%main.form$H%*%MASS::ginv(t(main.form$H)%*%main.parameters$main.random$V_inv%*%main.form$H)%*%t(main.form$H)%*%main.parameters$main.random$V_inv
-  main.parameters$main.random$sigma_w <- (1/dim(data_list$z)[1])*c(t(data_list$y%*%main.parameters$main.fixed$alpha - data_list$x%*%main.parameters$main.fixed$beta - data_list$z%*%main.parameters$main.random$u)%*%(data_list$y%*%main.parameters$main.fixed$alpha - data_list$x%*%main.parameters$main.fixed$beta - data_list$z%*%main.parameters$main.random$u) - sum(diag(main.parameters$main.random$P)))
-  main.parameters$main.random$G <- diag(dim(data_list$z)[2])*mean(((1/main.parameters$main.random$sigma_w)*main.parameters$main.random$u%*%t(main.parameters$main.random$u) - t(data_list$z)%*%main.parameters$main.random$P%*%data_list$z))
-  main.parameters$main.random$u <- main.parameters$main.random$G%*%t(data_list$z)%*%main.parameters$main.random$V_inv%*%((data_list$y)%*%main.parameters$main.fixed$alpha-(data_list$x)%*%main.parameters$main.fixed$beta)
 
-  main.form$K <- ((data_list$x)%*%main.parameters$main.fixed$beta)%*%MASS::ginv(t(main.parameters$main.fixed$beta)%*%main.parameters$main.fixed$beta)
-  main.form$H <- (data_list$z%*%main.parameters$main.random$u)%*%MASS::ginv(t(main.parameters$main.random$u)%*%main.parameters$main.random$u)
-  main.form$L <- main.form$H + main.form$K
 
-  main.parameters$main.random$residuals <- data_list$y%*%main.parameters$main.fixed$alpha-data_list$x%*%main.parameters$main.fixed$beta
+
+
+
+  main.parameters$main.fixed$alpha <- t((MASS::ginv(t(main.form$fixed_form)%*%(main.form$fixed_form))%*%t(main.form$fixed_form)%*%(data_list$y)))
+  main.parameters$main.fixed$beta <- t((MASS::ginv(t(main.form$fixed_form)%*%(main.form$fixed_form))%*%t(main.form$fixed_form)%*%(data_list$x)))
+  main.parameters$main.random$u <- t((MASS::ginv(t(main.form$fixed_form)%*%(main.form$fixed_form))%*%t(main.form$fixed_form)%*%(data_list$z)))
+
+  main.parameters$main.fixed$alpha_projection <- t(main.parameters$main.fixed$alpha)%*%MASS::ginv(main.parameters$main.fixed$alpha%*%t(main.parameters$main.fixed$alpha))
+  main.parameters$main.random$residuals <- data_list$y-data_list$x%*%main.parameters$main.fixed$beta%*%main.parameters$main.fixed$alpha_projection
+  main.form$random_form <- (data_list$z%*%main.parameters$main.random$u)%*%MASS::ginv(t(main.parameters$main.random$u)%*%main.parameters$main.random$u)
+
   main.parameters$main.random$var_Y <- diag(diag((main.parameters$main.random$residuals)%*%t(main.parameters$main.random$residuals)/dim(data_list$y)[1]))
-  main.parameters$main.random$D <- diag(diag(main.parameters$main.random$var_Y - data_list$z%*%main.parameters$main.random$G%*%t(data_list$z)))
+  main.parameters$main.random$D <- diag(diag(main.parameters$main.random$var_Y - data_list$z%*%t(data_list$z)))
+  diag(main.parameters$main.random$D)[diag(main.parameters$main.random$D)<0] <- 1e-5
+  main.parameters$main.random$V_inv <- diag(1/diag(main.parameters$main.random$D)) - diag(1/diag(main.parameters$main.random$D))%*%main.form$random_form%*%MASS::ginv(MASS::ginv(t(main.parameters$main.random$u)%*%(main.parameters$main.random$u)) + t(main.form$random_form)%*%diag(1/diag(main.parameters$main.random$D))%*%main.form$random_form)%*%t(main.form$random_form)%*%diag(1/diag(main.parameters$main.random$D))
+  main.parameters$main.random$P <- main.parameters$main.random$V_inv - main.parameters$main.random$V_inv%*%main.form$fixed_form%*%MASS::ginv(t(main.form$fixed_form)%*%main.parameters$main.random$V_inv%*%main.form$fixed_form)%*%t(main.form$fixed_form)%*%main.parameters$main.random$V_inv
+  main.parameters$main.random$sigma_w <- (1/dim(data_list$z)[1])*c((t(main.parameters$main.random$residuals - data_list$z%*%main.parameters$main.random$u%*%MASS::ginv(t(main.parameters$main.random$u)%*%(main.parameters$main.random$u))%*%t(main.parameters$main.fixed$alpha))%*%(main.parameters$main.random$residuals - data_list$z%*%main.parameters$main.random$u%*%MASS::ginv(t(main.parameters$main.random$u)%*%(main.parameters$main.random$u))%*%t(main.parameters$main.fixed$alpha)) - sum(diag(main.parameters$main.random$P))))
+  main.parameters$main.random$sigma_H <- c(t(data_list$y)%*%main.parameters$main.random$P%*%data_list$y)/(dim(data_list$y)[1])
+  main.parameters$main.random$G <- diag(diag((((1/main.parameters$main.random$sigma_w)*main.parameters$main.random$u%*%t(main.parameters$main.random$u) - t(data_list$z)%*%main.parameters$main.random$P%*%data_list$z))))
+  diag(main.parameters$main.random$G)[diag(main.parameters$main.random$G)<0] <- 1e-5
+  main.parameters$main.random$u <- main.parameters$main.random$G%*%t(data_list$z)%*%main.parameters$main.random$V_inv%*%(main.parameters$main.random$residuals)%*%main.parameters$main.fixed$alpha
+
 
   return(list(
               main.parameters=main.parameters,
