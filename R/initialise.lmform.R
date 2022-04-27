@@ -3,30 +3,55 @@ initialise.lmform <- function(data_list,
                               config
 ){
 
+  main.form <- list(K=NULL,
+                    L=NULL,
+                    H=NULL)
+
+  main.fixed <- list(alpha=NULL,
+                     beta=NULL)
+
+  main.random <- list(u = NULL,V_inv = NULL, P = NULL, sigma_w = NULL, G = NULL)
+
+  main.parameters <- list(main.fixed=main.fixed,
+                          main.random=main.random)
 
 
-  main.form <- list(K=(irlba::irlba(Y%*%t(Y)+X%*%t(X)+Z%*%t(Z),nu = config$j_dim, it = 30)$u),H=NULL)
-  main.parameters <- list(A=NULL,alpha=NULL,
-                          B=NULL,beta=NULL,
-                          C=NULL,u=NULL,
-                          intercept=NULL)
+  gcode.config <- gcode::extract_config(F)
+  gcode.config$init <- c("rnorm","rnorm")
+  gcode.config$i_dim <- config$j_dim
+  gcode.config$j_dim <- config$j_dim
+  gcode.config$verbose <- F
+  join <- gcode::extract_join_framework(F)
+  join$alpha <- c(1,2,3)
+  join$beta <- c(1,2,3)
+  join$code <- c(1,2,3)
 
+  gcode.model <- gcode::gcode(data_list = data_list, config = gcode.config, join = join)
 
-  main.parameters$A <- (MASS::ginv(t(main.form$K)%*%(main.form$K))%*%t(main.form$K)%*%(data_list$y))
-  main.parameters$alpha <- soft_threshold(t(main.parameters$A), config = config)
+  main.form$K <- t(gcode.model$main.parameters$alpha[[2]])%*%gcode.model$main.code$code[[2]]
+  main.form$H <- t(gcode.model$main.parameters$alpha[[3]])%*%gcode.model$main.code$code[[3]]
+  main.form$L <- main.form$K+main.form$H
 
-  main.parameters$B <- (MASS::ginv(t(main.form$K)%*%(main.form$K))%*%t(main.form$K)%*%data_list$x)
-  main.parameters$beta <- soft_threshold(t(main.parameters$B), config = config)
+  main.parameters$main.fixed$alpha <- t((MASS::ginv(t(main.form$L)%*%(main.form$L))%*%t(main.form$L)%*%(data_list$y)))
+  main.parameters$main.fixed$beta <- t((MASS::ginv(t(main.form$K)%*%(main.form$K))%*%t(main.form$K)%*%(data_list$x)))
+  main.parameters$main.random$u <- t(MASS::ginv(t(main.form$H)%*%main.form$H)%*%t(main.form$H)%*%data_list$z)
 
-  main.form$K <- data_list$x%*%main.parameters$beta%*%MASS::ginv(t(main.parameters$beta)%*%main.parameters$beta)
-  main.form$H <- data_list$y%*%main.parameters$alpha%*%MASS::ginv(t(main.parameters$alpha)%*%main.parameters$alpha) - main.form$K
+  main.parameters$main.random$V_inv <- diag(dim(data_list$y)[1]) - main.form$H%*%MASS::ginv(MASS::ginv(t(main.parameters$main.random$u)%*%(main.parameters$main.random$u)) + t(main.form$H)%*%main.form$H)%*%t(main.form$H)
+  main.parameters$main.random$P <- main.parameters$main.random$V_inv - main.parameters$main.random$V_inv%*%main.form$H%*%MASS::ginv(t(main.form$H)%*%main.parameters$main.random$V_inv%*%main.form$H)%*%t(main.form$H)%*%main.parameters$main.random$V_inv
+  main.parameters$main.random$sigma_w <- (1/dim(data_list$z)[1])*c(t(data_list$y%*%main.parameters$main.fixed$alpha - data_list$x%*%main.parameters$main.fixed$beta - data_list$z%*%main.parameters$main.random$u)%*%(data_list$y%*%main.parameters$main.fixed$alpha - data_list$x%*%main.parameters$main.fixed$beta - data_list$z%*%main.parameters$main.random$u) - sum(diag(main.parameters$main.random$P)))
+  main.parameters$main.random$G <- diag(dim(data_list$z)[2])*mean(((1/main.parameters$main.random$sigma_w)*main.parameters$main.random$u%*%t(main.parameters$main.random$u) - t(data_list$z)%*%main.parameters$main.random$P%*%data_list$z))
+  main.parameters$main.random$u <- main.parameters$main.random$G%*%t(data_list$z)%*%main.parameters$main.random$V_inv%*%((data_list$y)%*%main.parameters$main.fixed$alpha-(data_list$x)%*%main.parameters$main.fixed$beta)
 
-  main.parameters$C <- (MASS::ginv(t(main.form$H)%*%(main.form$H))%*%t(main.form$H)%*%data_list$z)
-  main.parameters$u <- soft_threshold(t(main.parameters$C), config = config)
+  main.form$K <- ((data_list$x)%*%main.parameters$main.fixed$beta)%*%MASS::ginv(t(main.parameters$main.fixed$beta)%*%main.parameters$main.fixed$beta)
+  main.form$H <- (data_list$z%*%main.parameters$main.random$u)%*%MASS::ginv(t(main.parameters$main.random$u)%*%main.parameters$main.random$u)
+  main.form$L <- main.form$H + main.form$K
 
-  main.parameters$intercept <- data_list$y%*%main.parameters$alpha - data_list$x%*%main.parameters$beta
+  main.parameters$main.random$residuals <- data_list$y%*%main.parameters$main.fixed$alpha-data_list$x%*%main.parameters$main.fixed$beta
+  main.parameters$main.random$var_Y <- diag(diag((main.parameters$main.random$residuals)%*%t(main.parameters$main.random$residuals)/dim(data_list$y)[1]))
+  main.parameters$main.random$D <- diag(diag(main.parameters$main.random$var_Y - data_list$z%*%main.parameters$main.random$G%*%t(data_list$z)))
 
-  return(list(main.parameters=main.parameters,
+  return(list(
+              main.parameters=main.parameters,
               main.form=main.form))
 
 }
